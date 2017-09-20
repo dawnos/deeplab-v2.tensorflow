@@ -17,12 +17,10 @@ def conv2d_group(inputs, repetitions, filters, pool_stride, scope):
 
 def branch(inputs, classes, scope_id, hold):
   net = pad(inputs, hold)
-  with tf.name_scope('fc6_%d' % scope_id):
-    net = slim.conv2d(net, 1024, 3, rate=hold, padding='VALID')
-    net = slim.dropout(net, keep_prob=0.5)
-  with tf.name_scope('fc7_%d' % scope_id):
-    net = slim.conv2d(net, 1024, 1)
-    net = slim.dropout(net, keep_prob=0.5)
+  net = slim.conv2d(net, 1024, 3, rate=hold, padding='VALID', scope=('fc6_%d' % scope_id))
+  net = slim.dropout(net, keep_prob=0.5, scope=('dropout6_%d' % scope_id))
+  net = slim.conv2d(net, 1024, 1, scope=('fc7_%d' % scope_id))
+  net = slim.dropout(net, keep_prob=0.5, scope=('dropout7_%d' % scope_id))
   net = slim.conv2d(net, classes, 1, scope=('fc8_EXP_%d' % scope_id))
   return net
 

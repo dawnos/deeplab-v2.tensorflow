@@ -4,6 +4,7 @@ import tensorflow.contrib.slim as slim
 from nets.deeplab import deeplab_vgg16
 from datasets import pascal
 
+
 FLAGS = tf.app.flags.FLAGS
 
 def main(arg):
@@ -27,7 +28,9 @@ def main(arg):
 
   saver = tf.train.Saver()
   with tf.Session() as sess:
-    sess.run()
+
+    saver.restore(sess, FLAGS.snapshot)
+    sess.run(tf.global_variables_initializer())
 
     for step in xrange(0, max_step):
       train_op.run()
