@@ -18,7 +18,7 @@ def _bytes_feature(value):
 def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=False):
 
   if output_filename is None:
-    output_filename = path + ".tfrecord"
+    output_filename = path + ".tfrecords"
   writer = tf.python_io.TFRecordWriter(output_filename)
 
   if listfile is None:
@@ -51,6 +51,7 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
       img_fn = path + line[0]
       seg_fn = path + line[1]
       img = cv2.imread(img_fn)
+      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
       seg = np.array(Image.open(seg_fn))
 
       if img is None:
@@ -79,8 +80,8 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
         'width': _int64_feature(img.shape[1]),
         'depth': _int64_feature(img.shape[2]),
         'image_raw': _bytes_feature(img_str),
-        'segmentation_raw': _bytes_feature(seg_str)})
-      )
+        'segmentation_raw': _bytes_feature(seg_str),
+      }))
       writer.write(example.SerializeToString())
 
       bar.update(i+1)
@@ -88,8 +89,43 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
     writer.close()
 
 
-def create_tfrecord_pipeline():
-  pass
+def create_tfrecord_pipeline(filename, batch_size=64, size=(64, 64), mean=None, name="pipeline"):
+  with tf.variable_scope(name):
+    filename_queue = tf.train.string_input_producer([filename])
+    reader = tf.TFRecordReader()
+    key, serialized_example = reader.read(filename_queue)
+    features = tf.parse_single_example(
+      serialized_example,
+      features={
+        'height': tf.FixedLenFeature([], tf.int64),
+        'width': tf.FixedLenFeature([], tf.int64),
+        'depth': tf.FixedLenFeature([], tf.int64),
+        'image_raw': tf.FixedLenFeature([], tf.string),
+        'segmentation_raw': tf.FixedLenFeature([], tf.string),
+      })
+
+    height = tf.cast(features['height'], tf.int32)
+    width = tf.cast(features['width'], tf.int32)
+    # depth = tf.cast(features['depth'], tf.int32)
+    image = tf.decode_raw(features['image_raw'], tf.uint8)
+    image = tf.reshape(image, tf.stack([height, width, 3]))
+    image = tf.image.resize_images(image, size, method=tf.image.ResizeMethod.BICUBIC)
+    image = tf.cast(image, tf.float32)
+
+    label = tf.decode_raw(features['segmentation_raw'], tf.uint8)
+    label = tf.reshape(label, tf.stack([height, width, 1]))
+    label = tf.image.resize_images(label, size, method=tf.image.ResizeMethod.BICUBIC)
+
+    if not (mean is None):
+      if mean is list or mean is tuple:
+        mean = np.array(mean)
+      image = tf.subtract(image, mean)
+
+    [images, labels] = tf.train.shuffle_batch(
+      [image, label], batch_size=batch_size, num_threads=4,
+      capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
+
+    return images, labels
 
 
 if __name__ == "__main__":
