@@ -36,7 +36,7 @@ def main(arg):
       train_op.run()
 
       if (step+1) % save_step == 0:
-        saver.save(sess, FLAGS.log_dir)
+        saver.save(sess, FLAGS.log_dir, write_meta_graph=False, write_state=False)
 
   writer.close()
 
