@@ -7,6 +7,8 @@ from tensorflow.python import debug as tf_debug
 FLAGS = tf.app.flags.FLAGS
 
 stop_requested = False
+
+
 def signal_handler(signal, frame):
   print('You pressed Ctrl+C!')
   stop_requested = True
@@ -16,7 +18,7 @@ def main(arg):
   classes = 21
   mean = (122.675, 116.669, 104.008)
   max_step = 20000
-  save_step = 2000
+  save_step = 5
   momentum = 0.9
   weight_decay = 0.0005
 
@@ -37,8 +39,6 @@ def main(arg):
     valid = tf.squeeze(tf.where(tf.less_equal(resized_labels_row, classes-1)), 1)
     logits_row_valid = tf.gather(logits_row, valid, name="valid_logits")
     resized_labels_row_valid = tf.gather(resized_labels_row, valid, name="valid_labels")
-    # l2_losses = [weight_decay * tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'weights' in v.name]
-    # l2_losses = tf.add_n(l2_losses)
     loss_op = tf.losses.sparse_softmax_cross_entropy(resized_labels_row_valid, logits_row_valid)#  + l2_losses
 
   if FLAGS.snapshot != "":
@@ -50,19 +50,14 @@ def main(arg):
       key2 = words[-2] + '/' + words[-1]
       pretrained_dict[key2] = var
 
-    not_pretrained_colletion = tf.get_collection("not_pretrained")
-
   else:
     pretrained_dict = []
     pretrained_colletion = []
-    not_pretrained_colletion = tf.get_collection(tf.GraphKeys.VARIABLES)
-
 
   with tf.variable_scope("trainer"):
     global_step = tf.Variable(0, trainable=False)
     learning_rate = tf.train.polynomial_decay(learning_rate=1e-3, global_step=global_step, decay_steps=max_step,
                                               end_learning_rate=0.0, power=0.9)
-    # train_op = tf.train.MomentumOptimizer(learning_rate, momentum=0.9).minimize(loss, global_step = global_step)
 
     pretrained_weights_collection = tf.get_collection("pretrained", ".*weights.*")
     pretrained_biases_collection = tf.get_collection("pretrained", ".*biases.*")
@@ -89,21 +84,23 @@ def main(arg):
     train_b_op2 = opt_b_op2.apply_gradients(zip(each_grads[3], not_pretrained_biases_collection))
     train_op = tf.group(train_w_op1, train_b_op1, train_w_op2, train_b_op2)
 
-  features = tf.get_collection("features")
-  for f in features:
-    split = tf.split(f, num_or_size_splits=f.get_shape()[3], axis=3)
-    tf.summary.image(f.name, split[0], 10)
+  if FLAGS.display_feature:
+    features = tf.get_collection("features")
+    for f in features:
+      split = tf.split(f, num_or_size_splits=f.get_shape()[3], axis=3)
+      tf.summary.image(f.name, split[0], 10)
 
-  # logit_chs = tf.split(logits, num_or_size_splits=logits.get_shape()[3], axis=3)
-  # for logit_ch in logit_chs:
-  #   tf.summary.image('logits', logit_ch)
+  if FLAGS.display_fc8:
+    logit_chs = tf.split(logits, num_or_size_splits=logits.get_shape()[3], axis=3)
+    for logit_ch in logit_chs:
+      tf.summary.image('logits', logit_ch)
 
   # Summary
   tf.summary.scalar("learning_rate", learning_rate)
   tf.summary.scalar("loss", loss_op)
   tf.summary.image("input_images", images)
-  # tf.summary.image("input_labels", tf.cast(labels * 10, tf.uint8))
-  tf.summary.image("resized_labels", tf.cast(resized_labels * 10, tf.uint8))
+  tf.summary.image("input_labels", tf.cast(labels * 10, tf.uint8))
+  # tf.summary.image("resized_labels", tf.cast(resized_labels * 10, tf.uint8))
   tf.summary.image("predition", tf.cast(pred * 10, tf.uint8))
   tf.summary.scalar("global_step", global_step)
   merged_summary = tf.summary.merge_all()
@@ -128,7 +125,7 @@ def main(arg):
   # Initialization
   print "Initializing variable..."
   # sess.run(tf.global_variables_initializer())
-  sess.run(tf.variables_initializer(set(tf.all_variables())-set(pretrained_colletion)))
+  sess.run(tf.variables_initializer(set(tf.global_variables())-set(pretrained_colletion)))
   print "Initialization done"
 
   saver = tf.train.Saver()
@@ -138,17 +135,18 @@ def main(arg):
     _, loss, summary = sess.run([train_op, loss_op, merged_summary])
     # _, loss = sess.run([train_op, loss_op])
     print 'loss=%f @ %d/%d' % (loss, step, max_step)
-    # _, summary = sess.run([images, merged_summary])
 
     # Save summary
     summary_writer.add_summary(summary, step)
 
     # Save checkpoint
     if (step+1) % save_step == 0:
-      saver.save(sess, FLAGS.log_dir, global_step=global_step)
+      path = saver.save(sess, FLAGS.save_dir, global_step=global_step)
+      print "Checkpoint saved: " + path
 
   # Save last checkpoint
-  saver.save(sess, FLAGS.log_dir, global_step=global_step)
+  path = saver.save(sess, FLAGS.log_dir, global_step=global_step)
+  print "Last checkpoint saved: " + path
 
   # writer.close()
   summary_writer.close()
@@ -157,8 +155,11 @@ def main(arg):
 
 if __name__ == "__main__":
   tf.app.flags.DEFINE_string("log_dir", "/tmp/deeplab/log", "Log dir")
+  tf.app.flags.DEFINE_string("save_dir", "/tmp/deeplab/model", "Model dir")
   # tf.app.flags.DEFINE_string("snapshot", "", "snapshot dir")
   tf.app.flags.DEFINE_string("snapshot", "/home/tangli/Projects/deeplab/prototxt_and_model/vgg16/init.ckpt",
                              "snapshot dir")
   tf.app.flags.DEFINE_boolean("debug", False, "whether use TFDebug")
+  tf.app.flags.DEFINE_boolean("display_feature", False, "whether display_feature")
+  tf.app.flags.DEFINE_boolean("display_fc8", False, "whether display_fc8")
   tf.app.run()

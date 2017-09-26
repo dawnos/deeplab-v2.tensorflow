@@ -1,5 +1,4 @@
 
-from os.path import join
 import cv2
 import tensorflow as tf
 import progressbar
@@ -22,21 +21,8 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
   writer = tf.python_io.TFRecordWriter(output_filename)
 
   if listfile is None:
-    sets = ['train', 'val', 'test']
-    for s in sets:
-      f = open(join(path, 'ImageSets', 'Segmentation', s + '.txt'))
-      lines = f.readlines()
+    raise Exception('Not implemented')
 
-      bar = progressbar.ProgressBar(len(lines), widgets=[progressbar.Bar('=', '[', ']'), ' ',
-                                                         progressbar.Percentage(), ' ', progressbar.ETA()])
-      bar.start()
-
-      for line in lines:
-        line = line.replace('\n', '')
-        img_fn = join(path, 'JPEGImages', line + '.jpg')
-        seg_fn = join(path, 'SegmentationClass', line + '.png')
-        img = cv2.imread(img_fn)
-        seg = cv2.imread(seg_fn)
   else:
     f = open(listfile, 'r')
     lines = f.readlines()
@@ -50,8 +36,9 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
       line = line.split(' ')
       img_fn = path + line[0]
       seg_fn = path + line[1]
-      img = cv2.imread(img_fn)
-      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+      # img = cv2.imread(img_fn)
+      # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+      img = np.array(Image.open(img_fn))
       seg = np.array(Image.open(seg_fn))
 
       if img is None:
@@ -110,23 +97,18 @@ def create_tfrecord_pipeline(filename, batch_size=64, crop_size=[64, 64], mean=N
 
     image = tf.decode_raw(features['image_raw'], tf.uint8)
     image = tf.reshape(image, tf.stack([height, width, 3]))
-    # image = tf.image.resize_images(image, crop_size, method=tf.image.ResizeMethod.BICUBIC)
     image = tf.cast(image, tf.float32)
 
     label = tf.decode_raw(features['segmentation_raw'], tf.uint8)
     label = tf.reshape(label, tf.stack([height, width, 1]))
-    # label = tf.image.resize_images(label, crop_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
     label = tf.cast(label, tf.float32)
 
-
-
-
-
+    # Concat to make sure same operation are appiled to image and label
     concat = tf.concat([image, label-255], 2)
     image_shape = tf.shape(image)
     concat = tf.image.pad_to_bounding_box(concat, 0, 0,
-                                                tf.maximum(crop_size[0], image_shape[0]),
-                                                tf.maximum(crop_size[1], image_shape[1]))
+                                          tf.maximum(crop_size[0], image_shape[0]),
+                                          tf.maximum(crop_size[1], image_shape[1]))
 
     # Random rescale
     # concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
@@ -137,13 +119,12 @@ def create_tfrecord_pipeline(filename, batch_size=64, crop_size=[64, 64], mean=N
     # Random mirror
     concat = tf.image.flip_left_right(concat)
 
-    #
-    image = concat[:,:,:3]
-    label = concat[:,:,3:] + 255
+    # Split image and label
+    image = concat[:, :, :3]
+    label = concat[:, :, 3:] + 255
     label = tf.cast(label, dtype=tf.uint8)
 
-    # Random mirror
-
+    # Mean substraction
     if not (mean is None):
       if mean is list or mean is tuple:
         mean = np.array(mean)
