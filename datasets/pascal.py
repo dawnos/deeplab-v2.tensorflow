@@ -18,7 +18,7 @@ def _bytes_feature(value):
 def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=False):
 
   if output_filename is None:
-    output_filename = path + ".tfrecords"
+    output_filename = path + ".tfrecord"
   writer = tf.python_io.TFRecordWriter(output_filename)
 
   if listfile is None:
@@ -89,7 +89,7 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
     writer.close()
 
 
-def create_tfrecord_pipeline(filename, batch_size=64, size=(64, 64), mean=None, name="pipeline"):
+def create_tfrecord_pipeline(filename, batch_size=64, crop_size=[64, 64], mean=None, name="pipeline"):
   with tf.variable_scope(name):
     filename_queue = tf.train.string_input_producer([filename])
     reader = tf.TFRecordReader()
@@ -107,14 +107,42 @@ def create_tfrecord_pipeline(filename, batch_size=64, size=(64, 64), mean=None, 
     height = tf.cast(features['height'], tf.int32)
     width = tf.cast(features['width'], tf.int32)
     # depth = tf.cast(features['depth'], tf.int32)
+
     image = tf.decode_raw(features['image_raw'], tf.uint8)
     image = tf.reshape(image, tf.stack([height, width, 3]))
-    image = tf.image.resize_images(image, size, method=tf.image.ResizeMethod.BICUBIC)
+    # image = tf.image.resize_images(image, crop_size, method=tf.image.ResizeMethod.BICUBIC)
     image = tf.cast(image, tf.float32)
 
     label = tf.decode_raw(features['segmentation_raw'], tf.uint8)
     label = tf.reshape(label, tf.stack([height, width, 1]))
-    label = tf.image.resize_images(label, size, method=tf.image.ResizeMethod.BICUBIC)
+    # label = tf.image.resize_images(label, crop_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    label = tf.cast(label, tf.float32)
+
+
+
+
+
+    concat = tf.concat([image, label-255], 2)
+    image_shape = tf.shape(image)
+    concat = tf.image.pad_to_bounding_box(concat, 0, 0,
+                                                tf.maximum(crop_size[0], image_shape[0]),
+                                                tf.maximum(crop_size[1], image_shape[1]))
+
+    # Random rescale
+    # concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+    # Random crop
+    concat = tf.random_crop(concat, [crop_size[0], crop_size[1], 4])
+
+    # Random mirror
+    concat = tf.image.flip_left_right(concat)
+
+    #
+    image = concat[:,:,:3]
+    label = concat[:,:,3:] + 255
+    label = tf.cast(label, dtype=tf.uint8)
+
+    # Random mirror
 
     if not (mean is None):
       if mean is list or mean is tuple:
