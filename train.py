@@ -18,17 +18,18 @@ def main(arg):
   classes = 21
   mean = (122.675, 116.669, 104.008)
   max_step = 20000
-  save_step = 5
+  save_step = 1000
   momentum = 0.9
   weight_decay = 0.0005
+  batch_size = 10
 
   images, labels = pascal.create_tfrecord_pipeline(
-    '/mnt/DataBlock2/VOCdevkit/VOC2012.tfrecord', batch_size=10, crop_size=(321, 321), mean=mean, name="inputs")
+    '/mnt/DataBlock2/VOCdevkit/VOC2012.tfrecord', batch_size = batch_size, crop_size=(321, 321), mean=mean, name="inputs")
 
   logits = deeplab_vgg16(images, classes=classes, weight_decay=weight_decay)
-  pred = tf.argmax(logits, axis=3)
-  pred = tf.expand_dims(pred, 3)
-  pred = tf.image.resize_images(pred, images.get_shape()[1:3], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+  resized_prediction = tf.argmax(logits, axis=3)
+  resized_prediction = tf.expand_dims(resized_prediction, 3)
+  prediction = tf.image.resize_images(resized_prediction, images.get_shape()[1:3], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
   with tf.name_scope("loss"):
     resized_labels = tf.image.resize_images(labels, logits.get_shape()[1:3], tf.image.ResizeMethod.NEAREST_NEIGHBOR)
@@ -40,6 +41,10 @@ def main(arg):
     logits_row_valid = tf.gather(logits_row, valid, name="valid_logits")
     resized_labels_row_valid = tf.gather(resized_labels_row, valid, name="valid_labels")
     loss_op = tf.losses.sparse_softmax_cross_entropy(resized_labels_row_valid, logits_row_valid)#  + l2_losses
+
+    resized_prediction_row = tf.reshape(resized_prediction, [-1])
+    resized_prediction_row_valid = tf.gather(resized_prediction_row, valid, name="valid_predictions")
+    accuracy_op = tf.metrics.accuracy(labels=resized_labels_row_valid, predictions=resized_prediction_row_valid)
 
   if FLAGS.snapshot != "":
     pretrained_colletion = tf.get_collection("pretrained")
@@ -101,7 +106,7 @@ def main(arg):
   tf.summary.image("input_images", images)
   tf.summary.image("input_labels", tf.cast(labels * 10, tf.uint8))
   # tf.summary.image("resized_labels", tf.cast(resized_labels * 10, tf.uint8))
-  tf.summary.image("predition", tf.cast(pred * 10, tf.uint8))
+  tf.summary.image("predition", tf.cast(prediction * 10, tf.uint8))
   tf.summary.scalar("global_step", global_step)
   merged_summary = tf.summary.merge_all()
 
