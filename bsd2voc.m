@@ -15,7 +15,8 @@ for i = 1:length(files)
     seg(GTinst.Segmentation == c) = GTinst.Categories(c);
   end
   
-  imwrite(seg, colormap, [vocRoot '/' files(i).name(1:(end-3)) 'png']);
+  imwrite(seg+1, colormap, [vocRoot '/' files(i).name(1:(end-3)) 'png']);
+  % imwrite(seg, [vocRoot '/' files(i).name(1:(end-3)) 'png']);
   % imagesc(seg);
   % waitforbuttonpress;
 end
