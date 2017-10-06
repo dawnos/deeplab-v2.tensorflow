@@ -1,7 +1,5 @@
 import numpy as np
-from time import sleep
 import Image
-import cv2
 import tensorflow as tf
 from nets.deeplab import deeplab_vgg16
 from datasets import pascal
@@ -18,18 +16,12 @@ def decode_label(label):
 def main(arg):
   classes = 21
   mean = (122.675, 116.669, 104.008)
-  # max_step = 20000
-  # test_step = 0
-  test_interval = 200000
-  save_step = 1000
-  momentum = 0.9
-  weight_decay = 0.0005
 
   images, labels, image_fns, original_shapes = pascal.create_pipeline(
     FLAGS.input, root_dir=FLAGS.root_dir,
     batch_size=FLAGS.batch_size, crop_size=(FLAGS.crop_size, FLAGS.crop_size), mean=mean,
     shuffle=FLAGS.shuffle, name="inputs")
-  logits = deeplab_vgg16(images, classes=classes, weight_decay=weight_decay)
+  logits = deeplab_vgg16(images, classes=classes, weight_decay=FLAGS.weight_decay)
   resized_prediction = tf.expand_dims(tf.argmax(logits, axis=3), 3)
   resized_prediction = tf.cast(resized_prediction, tf.int32, name="resized_prediction")
   prediction = tf.image.resize_images(resized_prediction, images.get_shape()[1:3],
@@ -49,7 +41,7 @@ def main(arg):
 
     resized_prediction_row = tf.reshape(resized_prediction, [-1])
     resized_prediction_row_valid = tf.gather(resized_prediction_row, valid, name="valid_predictions")
-  accuracy_op = tf.reduce_mean(tf.cast(tf.equal(resized_prediction_row_valid, resized_labels_row_valid), tf.float32), name='accuracy')
+  accuracy = tf.reduce_mean(tf.cast(tf.equal(resized_prediction_row_valid, resized_labels_row_valid), tf.float32), name='accuracy')
 
   with tf.variable_scope("trainer"):
     global_step = tf.Variable(0, trainable=False)
@@ -60,10 +52,10 @@ def main(arg):
     pretrained_biases_collection = tf.get_collection("pretrained", ".*biases.*")
     not_pretrained_weights_collection = tf.get_collection("not_pretrained", ".*weights.*")
     not_pretrained_biases_collection = tf.get_collection("not_pretrained", ".*biases.*")
-    opt_w_op1 = tf.train.MomentumOptimizer(learning_rate * 1, momentum=momentum)
-    opt_b_op1 = tf.train.MomentumOptimizer(learning_rate * 2, momentum=momentum)
-    opt_w_op2 = tf.train.MomentumOptimizer(learning_rate * 10, momentum=momentum)
-    opt_b_op2 = tf.train.MomentumOptimizer(learning_rate * 20, momentum=momentum)
+    opt_w_op1 = tf.train.MomentumOptimizer(learning_rate * 1, momentum=FLAGS.momentum)
+    opt_b_op1 = tf.train.MomentumOptimizer(learning_rate * 2, momentum=FLAGS.momentum)
+    opt_w_op2 = tf.train.MomentumOptimizer(learning_rate * 10, momentum=FLAGS.momentum)
+    opt_b_op2 = tf.train.MomentumOptimizer(learning_rate * 20, momentum=FLAGS.momentum)
     grads = tf.gradients(loss_op,
                          pretrained_weights_collection +
                          pretrained_biases_collection +
@@ -146,13 +138,13 @@ def main(arg):
   while True:
 
     # Test
-    if (step % test_interval) == 0:
+    if (step % FLAGS.test_interval) == 0:
       accuracy_total = 0.0
       accuracy_count = 0
       for ti in xrange(0, FLAGS.test_step):
-        accuracy, pred, _image_fns, _logits, _merged_summary, _images = \
-          sess.run([accuracy_op, tf.cast(resized_prediction, tf.uint8), image_fns, logits, merged_summary, tf.cast(images, tf.uint8)])
-        accuracy_total += accuracy
+        _accuracy, pred, _image_fns, _logits, _merged_summary, _images = \
+          sess.run([accuracy, tf.cast(resized_prediction, tf.uint8), image_fns, logits, merged_summary, tf.cast(images, tf.uint8)])
+        accuracy_total += _accuracy
         accuracy_count += 1
 
         if FLAGS.test_result_dir != "":
@@ -165,53 +157,41 @@ def main(arg):
             hh = ss[1]
 
             width_diff = FLAGS.crop_size - ww
-            # offset_crop_width = max(-width_diff // 2, 0)
             offset_pad_width = max(width_diff // 2, 0)
 
             height_diff = FLAGS.crop_size - hh
-            # offset_crop_height = max(-height_diff // 2, 0)
             offset_pad_height = max(height_diff // 2, 0)
 
             pp = Image.fromarray(pred[i, :, :, 0])
             pp = pp.resize((FLAGS.crop_size, FLAGS.crop_size), resample=Image.NEAREST)
             pp = pp.crop(box=(offset_pad_width, offset_pad_height, offset_pad_width+ww, offset_pad_height+hh))
 
-            # ppp = Image.fromarray(_images[i, :, :, :])
-            # ppp = ppp.crop()
-
-            # pp = pp[i, offset_pad_height:(offset_pad_height+hh), offset_pad_width:(offset_pad_width+ww), 0]
+            ppp = Image.fromarray(_images[i, :, :, :])
+            ppp = ppp.crop(box=(offset_pad_width, offset_pad_height, offset_pad_width + ww, offset_pad_height + hh))
 
             fn = fn.split("/")
             fn = fn[-1]
             fn = fn.replace('jpg', 'png')
             pp.save(FLAGS.test_result_dir + '/' + fn)
-            # ppp.save(FLAGS.test_result_dir + '/' + fn + '.jpg')
-
-            # Image.fromarray(np.array(pp)).show(title='pp')
-
-            # img.show(title='img')
-            # sleep(10)
-            # Image.
+            ppp.save(FLAGS.test_result_dir + '/' + fn + '.jpg')
 
       if accuracy_count > 0:
-        accuracy = accuracy_total / accuracy_count
+        _accuracy = accuracy_total / accuracy_count
       else:
-        accuracy = 0.0
-      print 'Accuracy:' + str(accuracy)
+        _accuracy = 0.0
+      print 'Accuracy:' + str(_accuracy)
 
     if step >= FLAGS.max_step:
       break
 
-    _, loss, summary = \
-      sess.run([train_op, loss_op, merged_summary])
-    # _, loss = sess.run([train_op, loss_op])
+    _, loss, summary = sess.run([train_op, loss_op, merged_summary])
     print 'loss=%f @ %d/%d' % (loss, step, FLAGS.max_step)
 
     # Save summary
     summary_writer.add_summary(summary, step)
 
     # Save checkpoint
-    if (step+1) % save_step == 0:
+    if (step+1) % FLAGS.save_step == 0:
       path = saver.save(sess, FLAGS.save_path, global_step=global_step)
       print "Checkpoint saved: " + path
 
@@ -229,32 +209,22 @@ def main(arg):
 
 
 if __name__ == "__main__":
-  tf.app.flags.DEFINE_string("input",
-                             # "/mnt/DataBlock2/VOCdevkit/VOC2012.tfrecord",
-                             # "/mnt/DataBlock2/VOCdevkit/VOC2012.val.tfrecord",
-                             "/mnt/DataBlock2/deeplab_list/val.txt",
-                             "Input")
-  tf.app.flags.DEFINE_string("root_dir",
-                             "/mnt/DataBlock2/VOCdevkit/VOC2012",
-                             # "",
-                             "root_dir")
+  tf.app.flags.DEFINE_string("input", "/mnt/DataBlock2/VOCdevkit/VOC2012.tfrecord", "Input")
+  tf.app.flags.DEFINE_string("root_dir", "", "root_dir")
   tf.app.flags.DEFINE_string("log_path", "/tmp/deeplab/log", "Log path")
   tf.app.flags.DEFINE_string("save_path", "/tmp/deeplab/model", "Model path")
-  tf.app.flags.DEFINE_string("snapshot",
-                             # "/home/tangli/Projects/deeplab/prototxt_and_model/vgg16/init.ckpt",
-                             "/tmp/deeplab/model-20000",
-                             # "",
-                             "snapshot dir")
+  tf.app.flags.DEFINE_string("snapshot", "/home/tangli/Projects/deeplab/prototxt_and_model/vgg16/init.ckpt", "snapshot dir")
   tf.app.flags.DEFINE_boolean("debug", False, "whether use TFDebug")
   tf.app.flags.DEFINE_boolean("display_feature", False, "whether display_feature")
   tf.app.flags.DEFINE_boolean("display_fc8", False, "whether display_fc8")
-  tf.app.flags.DEFINE_boolean("shuffle", False, "whether shuffle the input")
+  tf.app.flags.DEFINE_boolean("shuffle", True, "whether shuffle the input")
   tf.app.flags.DEFINE_integer("batch_size", 10, "batch size")
-  tf.app.flags.DEFINE_integer("crop_size", 513, "crop size")
-  tf.app.flags.DEFINE_integer("max_step", 0, "max step")
-  tf.app.flags.DEFINE_integer("test_step", 145, "test step")
-  tf.app.flags.DEFINE_string("test_result_dir",
-                             "/mnt/DataBlock2/VOCdevkit/results/VOC2012/Segmentation/comp5_val_cls/",
-                             # "",
-                             "test_result_dir")
+  tf.app.flags.DEFINE_integer("crop_size", 321, "crop size")
+  tf.app.flags.DEFINE_integer("max_step", 20000, "max step")
+  tf.app.flags.DEFINE_integer("test_step", 0, "test step")
+  tf.app.flags.DEFINE_integer("test_interval", 100000, "test interval")
+  tf.app.flags.DEFINE_string("test_result_dir", "", "test_result_dir")
+  tf.app.flags.DEFINE_float("weight_decay", 0.0005, "weight decay")
+  tf.app.flags.DEFINE_float("momentum", 0.9, "momentum")
+  tf.app.flags.DEFINE_float("save_step", 1000, "save step")
   tf.app.run()

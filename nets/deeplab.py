@@ -30,9 +30,9 @@ def _branch(inputs, classes, scope_id, hole):
   return net
 
 
-def deeplab_vgg16(inputs, classes, weight_decay=0.0005, scope='deeplab'):
+def deeplab_vgg16(inputs, classes, weight_decay=0.0005, scope='deeplab', reuse=False):
   with tf.variable_scope(scope):
-    with slim.arg_scope([slim.conv2d], weights_regularizer=tf.contrib.layers.l2_regularizer(weight_decay)):
+    with slim.arg_scope([slim.conv2d], weights_regularizer=tf.contrib.layers.l2_regularizer(weight_decay), reuse=reuse):
       net = _conv2d_group(inputs, 2,  64, pool_stride=2, dilation_rate=1, scope_id=1)
       net = _conv2d_group(   net, 2, 128, pool_stride=2, dilation_rate=1, scope_id=2)
       net = _conv2d_group(   net, 3, 256, pool_stride=2, dilation_rate=1, scope_id=3)

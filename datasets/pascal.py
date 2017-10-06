@@ -46,14 +46,6 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
 
       assert (img.shape[0:2] == seg.shape[0:2])
 
-      """
-      cv2.imshow('image', img)
-      cv2.imshow('segmentation', seg*10)
-      cv2.moveWindow('image', 100, 200)
-      cv2.moveWindow('segmentation', 900, 200)
-      cv2.waitKey()
-      """
-
       if preprocess:
         raise Exception("Not implemented")
 
@@ -113,12 +105,10 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
       img_fn = root_dir + img_fn
       seg_fn = root_dir + seg_fn
       image = tf.image.decode_jpeg(tf.read_file(img_fn), channels=3)
-      # image = tf.image.resize_images(image, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
       image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
 
       image = tf.cast(image, tf.float32)
       label = tf.image.decode_png(tf.read_file(seg_fn), channels=1)
-      # label = tf.image.resize_images(label, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
       label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
       label = tf.cast(label, tf.float32)
 
@@ -131,8 +121,8 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
                                             tf.maximum(crop_size[1], image_shape[1]))
 
       # Random rescale
-      # concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size,
-      #                                 method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size,
+                                      method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
       # Random crop
       concat = tf.random_crop(concat, [crop_size[0], crop_size[1], 4])
@@ -157,10 +147,6 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
     else:
       image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
       label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
-      # image = tf.image.pad_to_bounding_box(0, 0, image, crop_size[0], crop_size[1])
-      # label = tf.image.pad_to_bounding_box(0, 0, label, crop_size[0], crop_size[1])
-      # image = tf.image.resize_images(image, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-      # label = tf.image.resize_images(label, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
       label = tf.cast(label, dtype=tf.int32)
       [images, labels, img_fns, origin_shapes] = tf.train.batch(
