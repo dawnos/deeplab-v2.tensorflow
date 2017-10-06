@@ -1,5 +1,4 @@
 
-import cv2
 import tensorflow as tf
 import progressbar
 import Image
@@ -36,8 +35,6 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
       line = line.split(' ')
       img_fn = path + line[0]
       seg_fn = path + line[1]
-      # img = cv2.imread(img_fn)
-      # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
       img = np.array(Image.open(img_fn))
       seg = np.array(Image.open(seg_fn))
 
@@ -76,66 +73,102 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
     writer.close()
 
 
-def create_tfrecord_pipeline(filename, batch_size=64, crop_size=[64, 64], mean=None, name="pipeline"):
+def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
+                    mean=None, shuffle=True, name="pipeline"):
   with tf.variable_scope(name):
-    filename_queue = tf.train.string_input_producer([filename])
-    reader = tf.TFRecordReader()
-    key, serialized_example = reader.read(filename_queue)
-    features = tf.parse_single_example(
-      serialized_example,
-      features={
-        'height': tf.FixedLenFeature([], tf.int64),
-        'width': tf.FixedLenFeature([], tf.int64),
-        'depth': tf.FixedLenFeature([], tf.int64),
-        'image_raw': tf.FixedLenFeature([], tf.string),
-        'segmentation_raw': tf.FixedLenFeature([], tf.string),
-      })
+    if root_dir == "":
+      filename_queue = tf.train.string_input_producer([filename])
+      reader = tf.TFRecordReader()
+      key, serialized_example = reader.read(filename_queue)
+      features = tf.parse_single_example(
+        serialized_example,
+        features={
+          'height': tf.FixedLenFeature([], tf.int64),
+          'width': tf.FixedLenFeature([], tf.int64),
+          'depth': tf.FixedLenFeature([], tf.int64),
+          'image_raw': tf.FixedLenFeature([], tf.string),
+          'segmentation_raw': tf.FixedLenFeature([], tf.string),
+        })
 
-    height = tf.cast(features['height'], tf.int32)
-    width = tf.cast(features['width'], tf.int32)
-    # depth = tf.cast(features['depth'], tf.int32)
+      height = tf.cast(features['height'], tf.int32)
+      width = tf.cast(features['width'], tf.int32)
+      # depth = tf.cast(features['depth'], tf.int32)
 
-    image = tf.decode_raw(features['image_raw'], tf.uint8)
-    image = tf.reshape(image, tf.stack([height, width, 3]))
-    image = tf.cast(image, tf.float32)
+      image = tf.decode_raw(features['image_raw'], tf.uint8)
+      image = tf.reshape(image, tf.stack([height, width, 3]))
+      image = tf.cast(image, tf.float32)
 
-    label = tf.decode_raw(features['segmentation_raw'], tf.uint8)
-    label = tf.reshape(label, tf.stack([height, width, 1]))
-    label = tf.cast(label, tf.float32)
+      label = tf.decode_raw(features['segmentation_raw'], tf.uint8)
+      label = tf.reshape(label, tf.stack([height, width, 1]))
+      label = tf.cast(label, tf.float32)
 
-    # Concat to make sure same operation are appiled to image and label
-    concat = tf.concat([image, label-255], 2)
-    image_shape = tf.shape(image)
-    concat = tf.image.pad_to_bounding_box(concat, 0, 0,
-                                          tf.maximum(crop_size[0], image_shape[0]),
-                                          tf.maximum(crop_size[1], image_shape[1]))
+      img_fn = tf.constant("test.jpg", tf.string)
 
-    # Random rescale
-    # concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    else:
+      root_dir = tf.constant(root_dir + '/', dtype=tf.string)
+      filename_queue = tf.train.string_input_producer([filename])
+      txt_reader = tf.TextLineReader()
+      key, value = txt_reader.read(filename_queue)
+      img_fn, seg_fn = tf.decode_csv(value, record_defaults=[['NaN'], ['NaN']], field_delim=' ')
+      img_fn = root_dir + img_fn
+      seg_fn = root_dir + seg_fn
+      image = tf.image.decode_jpeg(tf.read_file(img_fn), channels=3)
+      # image = tf.image.resize_images(image, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
 
-    # Random crop
-    concat = tf.random_crop(concat, [crop_size[0], crop_size[1], 4])
+      image = tf.cast(image, tf.float32)
+      label = tf.image.decode_png(tf.read_file(seg_fn), channels=1)
+      # label = tf.image.resize_images(label, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
+      label = tf.cast(label, tf.float32)
 
-    # Random mirror
-    concat = tf.image.flip_left_right(concat)
+    if shuffle:
+      # Concat to make sure same operation are appiled to image and label
+      concat = tf.concat([image, label - 255], 2)
+      image_shape = tf.shape(image)
+      concat = tf.image.pad_to_bounding_box(concat, 0, 0,
+                                            tf.maximum(crop_size[0], image_shape[0]),
+                                            tf.maximum(crop_size[1], image_shape[1]))
 
-    # Split image and label
-    image = concat[:, :, :3]
-    label = concat[:, :, 3:] + 255
-    label = tf.cast(label, dtype=tf.uint8)
+      # Random rescale
+      # concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size,
+      #                                 method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-    # Mean substraction
-    if not (mean is None):
-      if mean is list or mean is tuple:
-        mean = np.array(mean)
-      image = tf.subtract(image, mean)
+      # Random crop
+      concat = tf.random_crop(concat, [crop_size[0], crop_size[1], 4])
 
-    [images, labels] = tf.train.shuffle_batch(
-      [image, label], batch_size=batch_size, num_threads=4,
-      capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
+      # Random mirror
+      concat = tf.image.flip_left_right(concat)
 
-    return images, labels
+      # Split image and label
+      image = concat[:, :, :3]
+      label = concat[:, :, 3:] + 255
+
+      # Mean substraction
+      if not (mean is None):
+        if mean is list or mean is tuple:
+          mean = np.array(mean)
+        image = tf.subtract(image, mean)
+
+      label = tf.cast(label, dtype=tf.int32)
+      [images, labels, img_fns, origin_shapes] = tf.train.shuffle_batch(
+        [image, label, img_fn, image.get_shape()], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
+      return images, labels, img_fns, origin_shapes
+    else:
+      image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
+      label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
+      # image = tf.image.pad_to_bounding_box(0, 0, image, crop_size[0], crop_size[1])
+      # label = tf.image.pad_to_bounding_box(0, 0, label, crop_size[0], crop_size[1])
+      # image = tf.image.resize_images(image, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      # label = tf.image.resize_images(label, [crop_size[0], crop_size[1]], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+      label = tf.cast(label, dtype=tf.int32)
+      [images, labels, img_fns, origin_shapes] = tf.train.batch(
+      [image, label, img_fn, image.get_shape()], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size)
+      return images, labels, img_fns, origin_shapes
 
 
 if __name__ == "__main__":
   convert_to_tfrecords('/mnt/DataBlock2/VOCdevkit/VOC2012', listfile='/mnt/DataBlock2/deeplab_list/train_aug.txt')
+  # convert_to_tfrecords('/mnt/DataBlock2/VOCdevkit/VOC2012', listfile='/mnt/DataBlock2/deeplab_list/val.txt',
+  #                      output_filename='/mnt/DataBlock2/VOCdevkit/VOC2012.val.tfrecord')

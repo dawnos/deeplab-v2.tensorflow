@@ -4,7 +4,7 @@ import tensorflow.contrib.slim as slim
 
 
 def _pad(inputs, padding, name):
-  return tf.pad(inputs, [[0,0], [padding, padding], [padding, padding], [0,0]], mode='CONSTANT', name=name)
+  return tf.pad(inputs, [[0, 0], [padding, padding], [padding, padding], [0, 0]], mode='CONSTANT', name=name)
 
 
 def _conv2d_group(inputs, repetitions, filters, pool_stride, dilation_rate, scope_id):
@@ -20,11 +20,13 @@ def _branch(inputs, classes, scope_id, hole):
 
   with slim.arg_scope([slim.conv2d], outputs_collections=["features"]):
     net = _pad(inputs, hole, 'pad6_%d' % scope_id)
-    net = slim.conv2d(net, 1024, 3, rate=hole, padding='VALID', scope=('fc6_%d' % scope_id), variables_collections=["pretrained"])
+    net = slim.conv2d(net, 1024, 3, rate=hole, padding='VALID', scope=('fc6_%d' % scope_id),
+                      variables_collections=["pretrained"])
     net = slim.dropout(net, keep_prob=0.5, scope=('dropout6_%d' % scope_id))
     net = slim.conv2d(net, 1024, 1, scope=('fc7_%d' % scope_id), variables_collections=["pretrained"])
     net = slim.dropout(net, keep_prob=0.5, scope=('dropout7_%d' % scope_id))
-    net = slim.conv2d(net, classes, 1, scope=('fc8_EXP_%d' % scope_id), activation_fn=None, variables_collections=["not_pretrained"])
+    net = slim.conv2d(net, classes, 1, scope=('fc8_EXP_%d' % scope_id), activation_fn=None,
+                      variables_collections=["not_pretrained"])
   return net
 
 
