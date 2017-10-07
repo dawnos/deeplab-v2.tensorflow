@@ -66,7 +66,7 @@ def convert_to_tfrecords(path, output_filename=None, listfile=None, preprocess=F
 
 
 def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
-                    mean=None, shuffle=True, name="pipeline"):
+                    mean=None, shuffle=True, name="pipeline", random_crop=True, resize=True):
   with tf.variable_scope(name):
     if root_dir == "":
       filename_queue = tf.train.string_input_producer([filename])
@@ -105,14 +105,14 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
       img_fn = root_dir + img_fn
       seg_fn = root_dir + seg_fn
       image = tf.image.decode_jpeg(tf.read_file(img_fn), channels=3)
-      image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
+      # image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
 
       image = tf.cast(image, tf.float32)
       label = tf.image.decode_png(tf.read_file(seg_fn), channels=1)
-      label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
+      # label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
       label = tf.cast(label, tf.float32)
 
-    if shuffle:
+    if random_crop:
       # Concat to make sure same operation are appiled to image and label
       concat = tf.concat([image, label - 255], 2)
       image_shape = tf.shape(image)
@@ -121,8 +121,8 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
                                             tf.maximum(crop_size[1], image_shape[1]))
 
       # Random rescale
-      concat = tf.image.resize_images(concat, tf.random_uniform(2, 0.5, 1.5) * crop_size,
-                                      method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      # concat = tf.image.resize_images(concat, tf.random_uniform([2], 0.5, 1.5) * crop_size,
+      #                                 method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
       # Random crop
       concat = tf.random_crop(concat, [crop_size[0], crop_size[1], 4])
@@ -134,24 +134,30 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
       image = concat[:, :, :3]
       label = concat[:, :, 3:] + 255
 
-      # Mean substraction
-      if not (mean is None):
-        if mean is list or mean is tuple:
-          mean = np.array(mean)
-        image = tf.subtract(image, mean)
-
-      label = tf.cast(label, dtype=tf.int32)
-      [images, labels, img_fns, origin_shapes] = tf.train.shuffle_batch(
-        [image, label, img_fn, image.get_shape()], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
-      return images, labels, img_fns, origin_shapes
     else:
-      image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
-      label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
+      if resize:
+        image = tf.image.resize_images(image, (crop_size[0], crop_size[1]), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+        label = tf.image.resize_images(label, (crop_size[0], crop_size[1]), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+      else:
+        image = tf.image.resize_image_with_crop_or_pad(image, crop_size[0], crop_size[1])
+        label = tf.image.resize_image_with_crop_or_pad(label, crop_size[0], crop_size[1])
 
-      label = tf.cast(label, dtype=tf.int32)
-      [images, labels, img_fns, origin_shapes] = tf.train.batch(
-      [image, label, img_fn, image.get_shape()], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size)
-      return images, labels, img_fns, origin_shapes
+    # Mean substraction
+    if not (mean is None):
+      if mean is list or mean is tuple:
+        mean = np.array(mean)
+      image = tf.subtract(image, mean)
+
+    label = tf.cast(label, dtype=tf.int32)
+
+    if shuffle:
+      [images, labels, img_fns] = tf.train.shuffle_batch(
+        [image, label, img_fn, ], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
+      return images, labels, img_fns
+    else:
+      [images, labels, img_fns] = tf.train.batch(
+      [image, label, img_fn], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size)
+      return images, labels, img_fns
 
 
 if __name__ == "__main__":

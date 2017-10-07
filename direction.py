@@ -13,90 +13,105 @@ def decode_label(label):
   return tf.cast(tf.clip_by_value(tf.cast(label, tf.float32) * 10, clip_value_min=0, clip_value_max=255), tf.uint8)
 
 
-def main(arg):
+def main(_):
   classes = 21
   mean = (122.675, 116.669, 104.008)
 
   inputs = (
     '/mnt/DataBlock2/FindYourOwnWay/exp/YQ-south/list/train_f_1.txt',
     '/mnt/DataBlock2/FindYourOwnWay/exp/YQ-south/list/train_l_1.txt',
-    '/mnt/DataBlock2/FindYourOwnWay/exp/YQ-south/list/train_r_1.txt')
-  images = []
-  labels = []
-  image_fns = []
-  logits = []
-  resized_prediction = []
-  prediction = []
-  resized_labels = []
-  loss = []
-  train_op = []
-  global_step = tf.Variable(0, trainable=False)
-  learning_rate = tf.train.polynomial_decay(learning_rate=1e-3, global_step=global_step, decay_steps=FLAGS.max_step,
-                                            end_learning_rate=0.0, power=0.9)
+    '/mnt/DataBlock2/FindYourOwnWay/exp/YQ-south/list/train_r_1.txt',
+  )
+
+  images_a = []
+  labels_a = []
+  image_fns_a = []
+  direction = tf.placeholder(tf.int32)
   for i in xrange(3):
-    images[i], labels[i], image_fns[i] = pascal.create_pipeline(
-      inputs[i], root_dir='', batch_size=FLAGS.batch_size, crop_size=(FLAGS.crop_size, FLAGS.crop_size), mean=mean,
-      shuffle=FLAGS.shuffle, name="inputs")
+    image, label, image_fn = pascal.create_pipeline(
+      inputs[i], root_dir="/", batch_size=FLAGS.batch_size, crop_size=(FLAGS.crop_size, FLAGS.crop_size), mean=mean,
+      shuffle=FLAGS.shuffle, name="inputs", random_crop=FLAGS.random_crop, resize=FLAGS.resize)
+    images_a.append(image)
+    labels_a.append(label)
+    image_fns_a.append(image_fn)
+  images = tf.case({
+    tf.equal(direction, 0): (lambda: images_a[0]),
+    tf.equal(direction, 1): (lambda: images_a[1]),
+    tf.equal(direction, 2): (lambda: images_a[2]),
+  }, default=(lambda: images_a[0]), exclusive=True)
+  labels = tf.case({
+    tf.equal(direction, 0): lambda: labels_a[0],
+    tf.equal(direction, 1): lambda: labels_a[1],
+    tf.equal(direction, 2): lambda: labels_a[2],
+  }, default=lambda:labels_a[0], exclusive=True)
+  image_fns = tf.case({
+    tf.equal(direction, 0): lambda: image_fns_a[0],
+    tf.equal(direction, 1): lambda: image_fns_a[1],
+    tf.equal(direction, 2): lambda: image_fns_a[2],
+  }, default=lambda: image_fns_a[0], exclusive=True)
+  logits = deeplab_vgg16(images, classes=classes, weight_decay=FLAGS.weight_decay)
+  resized_prediction = tf.expand_dims(tf.argmax(logits, axis=3), 3)
+  resized_prediction = tf.cast(resized_prediction, tf.int32, name="resized_prediction")
+  prediction = tf.image.resize_images(resized_prediction, images.get_shape()[1:3],
+                                      method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-    logits[i] = deeplab_vgg16(images[i], classes=classes, weight_decay=FLAGS.weight_decay, reuse=(i != 0))
-    resized_prediction[i] = tf.expand_dims(tf.argmax(logits, axis=3), 3)
-    resized_prediction[i] = tf.cast(resized_prediction[i], tf.int32, name="resized_prediction")
-    prediction[i] = tf.image.resize_images(resized_prediction[i], images[i].get_shape()[1:3],
-                                           method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+  with tf.name_scope("loss"):
+    with tf.name_scope('resized_label'):
+      resized_labels = tf.image.resize_images(labels, logits.get_shape()[1:3], tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    resized_labels = tf.cast(resized_labels, tf.int32)
 
-    with tf.name_scope("loss"):
-      with tf.name_scope('resized_label'):
-        resized_labels[i] = tf.image.resize_images(labels[i], logits[i].get_shape()[1:3], tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-      resized_labels[i] = tf.cast(resized_labels[i], tf.int32)
+    logits_row = tf.reshape(logits, [-1, classes])
+    resized_labels_row = tf.reshape(resized_labels, [-1])
+    valid = tf.squeeze(tf.where(tf.less_equal(resized_labels_row, classes-1)), 1)
+    logits_row_valid = tf.gather(logits_row, valid, name="valid_logits")
+    resized_labels_row_valid = tf.gather(resized_labels_row, valid, name="valid_labels")
+    loss = tf.losses.sparse_softmax_cross_entropy(resized_labels_row_valid, logits_row_valid)
 
-      logits_row = tf.reshape(logits[i], [-1, classes])
-      resized_labels_row = tf.reshape(resized_labels[i], [-1])
-      valid = tf.squeeze(tf.where(tf.less_equal(resized_labels_row, classes-1)), 1)
-      logits_row_valid = tf.gather(logits_row, valid, name="valid_logits")
-      resized_labels_row_valid = tf.gather(resized_labels_row, valid, name="valid_labels")
-      loss[i] = tf.losses.sparse_softmax_cross_entropy(resized_labels_row_valid, logits_row_valid)
+    resized_prediction_row = tf.reshape(resized_prediction, [-1])
+    resized_prediction_row_valid = tf.gather(resized_prediction_row, valid, name="valid_predictions")
+  accuracy = tf.reduce_mean(tf.cast(tf.equal(resized_prediction_row_valid, resized_labels_row_valid), tf.float32),
+                            name='accuracy')
 
-      resized_prediction_row = tf.reshape(resized_prediction, [-1])
-      resized_prediction_row_valid = tf.gather(resized_prediction_row, valid, name="valid_predictions")
-    accuracy = tf.reduce_mean(tf.cast(tf.equal(resized_prediction_row_valid, resized_labels_row_valid), tf.float32),
-                              name='accuracy')
+  with tf.variable_scope("trainer"):
+    global_step = tf.Variable(0, trainable=False)
+    learning_rate = tf.train.polynomial_decay(learning_rate=1e-3, global_step=global_step, decay_steps=FLAGS.max_step,
+                                              end_learning_rate=0.0, power=0.9)
 
-    with tf.variable_scope("trainer"):
-      pretrained_weights_collection = tf.get_collection("pretrained", ".*weights.*")
-      pretrained_biases_collection = tf.get_collection("pretrained", ".*biases.*")
-      not_pretrained_weights_collection = tf.get_collection("not_pretrained", ".*weights.*")
-      not_pretrained_biases_collection = tf.get_collection("not_pretrained", ".*biases.*")
-      opt_w_op1 = tf.train.MomentumOptimizer(learning_rate * 1, momentum=FLAGS.momentum)
-      opt_b_op1 = tf.train.MomentumOptimizer(learning_rate * 2, momentum=FLAGS.momentum)
-      opt_w_op2 = tf.train.MomentumOptimizer(learning_rate * 10, momentum=FLAGS.momentum)
-      opt_b_op2 = tf.train.MomentumOptimizer(learning_rate * 20, momentum=FLAGS.momentum)
-      grads = tf.gradients(loss[i],
-                           pretrained_weights_collection +
-                           pretrained_biases_collection +
-                           not_pretrained_weights_collection +
-                           not_pretrained_biases_collection)
-      collection_sizes = [len(pretrained_weights_collection),
-                          len(pretrained_biases_collection),
-                          len(not_pretrained_weights_collection),
-                          len(not_pretrained_biases_collection)]
-      collection_size_cumsum = [0] + np.cumsum(collection_sizes).tolist()
-      each_grads = [grads[collection_size_cumsum[i]:collection_size_cumsum[i+1]] for i in xrange(4)]
-      train_w_op1 = opt_w_op1.apply_gradients(zip(each_grads[0], pretrained_weights_collection), global_step=global_step)
-      train_b_op1 = opt_b_op1.apply_gradients(zip(each_grads[1], pretrained_biases_collection))
-      train_w_op2 = opt_w_op2.apply_gradients(zip(each_grads[2], not_pretrained_weights_collection))
-      train_b_op2 = opt_b_op2.apply_gradients(zip(each_grads[3], not_pretrained_biases_collection))
-      train_op[i] = tf.group(train_w_op1, train_b_op1, train_w_op2, train_b_op2)
+    pretrained_weights_collection = tf.get_collection("pretrained", ".*weights.*")
+    pretrained_biases_collection = tf.get_collection("pretrained", ".*biases.*")
+    not_pretrained_weights_collection = tf.get_collection("not_pretrained", ".*weights.*")
+    not_pretrained_biases_collection = tf.get_collection("not_pretrained", ".*biases.*")
+    opt_w_op1 = tf.train.MomentumOptimizer(learning_rate * 1, momentum=FLAGS.momentum)
+    opt_b_op1 = tf.train.MomentumOptimizer(learning_rate * 2, momentum=FLAGS.momentum)
+    opt_w_op2 = tf.train.MomentumOptimizer(learning_rate * 10, momentum=FLAGS.momentum)
+    opt_b_op2 = tf.train.MomentumOptimizer(learning_rate * 20, momentum=FLAGS.momentum)
+    grads = tf.gradients(loss,
+                         pretrained_weights_collection +
+                         pretrained_biases_collection +
+                         not_pretrained_weights_collection +
+                         not_pretrained_biases_collection)
+    collection_sizes = [len(pretrained_weights_collection),
+                        len(pretrained_biases_collection),
+                        len(not_pretrained_weights_collection),
+                        len(not_pretrained_biases_collection)]
+    collection_size_cumsum = [0] + np.cumsum(collection_sizes).tolist()
+    each_grads = [grads[collection_size_cumsum[i]:collection_size_cumsum[i+1]] for i in xrange(4)]
+    train_w_op1 = opt_w_op1.apply_gradients(zip(each_grads[0], pretrained_weights_collection), global_step=global_step)
+    train_b_op1 = opt_b_op1.apply_gradients(zip(each_grads[1], pretrained_biases_collection))
+    train_w_op2 = opt_w_op2.apply_gradients(zip(each_grads[2], not_pretrained_weights_collection))
+    train_b_op2 = opt_b_op2.apply_gradients(zip(each_grads[3], not_pretrained_biases_collection))
+    train_op = tf.group(train_w_op1, train_b_op1, train_w_op2, train_b_op2)
 
-    if FLAGS.display_feature:
-      features = tf.get_collection("features")
-      for f in features:
-        split = tf.split(f, num_or_size_splits=f.get_shape()[3], axis=3)
-        tf.summary.image(f.name, split[0], 10)
+  if FLAGS.display_feature:
+    features = tf.get_collection("features")
+    for f in features:
+      split = tf.split(f, num_or_size_splits=f.get_shape()[3], axis=3)
+      tf.summary.image(f.name, split[0], 10)
 
-    if FLAGS.display_fc8:
-      logit_chs = tf.split(logits, num_or_size_splits=logits[i].get_shape()[3], axis=3)
-      for logit_ch in logit_chs:
-        tf.summary.image('logits', logit_ch)
+  if FLAGS.display_fc8:
+    logit_chs = tf.split(logits, num_or_size_splits=logits.get_shape()[3], axis=3)
+    for logit_ch in logit_chs:
+      tf.summary.image('logits', logit_ch)
 
   # Summary
   tf.summary.scalar("learning_rate", learning_rate)
@@ -156,14 +171,15 @@ def main(arg):
       accuracy_total = 0.0
       accuracy_count = 0
       for ti in xrange(0, FLAGS.test_step):
-        _accuracy, _resized_prediction, _image_fns, _logits, _images = \
-          sess.run([accuracy, tf.cast(resized_prediction, tf.uint8), image_fns, logits, tf.cast(images, tf.uint8)])
+        _accuracy, pred, _image_fns, _logits, _merged_summary, _images = \
+          sess.run([accuracy, tf.cast(resized_prediction, tf.uint8), image_fns, logits, merged_summary,
+                    tf.cast(images, tf.uint8)])
         accuracy_total += _accuracy
         accuracy_count += 1
 
         if FLAGS.test_result_dir != "":
-          assert(_resized_prediction.shape[0] == _image_fns.shape[0])
-          for i in xrange(_resized_prediction.shape[0]):
+          assert(pred.shape[0] == _image_fns.shape[0])
+          for i in xrange(pred.shape[0]):
             fn = _image_fns[i]
             img = Image.fromarray(np.array(Image.open(fn)))
             ss = img.size
@@ -176,7 +192,7 @@ def main(arg):
             height_diff = FLAGS.crop_size - hh
             offset_pad_height = max(height_diff // 2, 0)
 
-            pp = Image.fromarray(_resized_prediction[i, :, :, 0])
+            pp = Image.fromarray(pred[i, :, :, 0])
             pp = pp.resize((FLAGS.crop_size, FLAGS.crop_size), resample=Image.NEAREST)
             pp = pp.crop(box=(offset_pad_width, offset_pad_height, offset_pad_width+ww, offset_pad_height+hh))
 
@@ -198,11 +214,12 @@ def main(arg):
     if step >= FLAGS.max_step:
       break
 
-    _, _loss, summary = sess.run([train_op, loss, merged_summary])
-    print 'loss=%f @ %d/%d' % (_loss, step, FLAGS.max_step)
+    for d in xrange(3):
+      _, _loss, summary = sess.run([train_op, loss, merged_summary], feed_dict={direction: d})
+      print 'loss(%d)=%f @ %d/%d' % (d, _loss, step, FLAGS.max_step)
 
-    # Save summary
-    summary_writer.add_summary(summary, step)
+      # Save summary
+      summary_writer.add_summary(summary, step)
 
     # Save checkpoint
     if (step+1) % FLAGS.save_step == 0:
@@ -225,15 +242,16 @@ def main(arg):
 if __name__ == "__main__":
   tf.app.flags.DEFINE_string("input", "/mnt/DataBlock2/VOCdevkit/VOC2012.tfrecord", "Input")
   tf.app.flags.DEFINE_string("root_dir", "", "root_dir")
-  tf.app.flags.DEFINE_string("log_path", "/tmp/deeplab/log", "Log path")
-  tf.app.flags.DEFINE_string("save_path", "/tmp/deeplab/model", "Model path")
-  tf.app.flags.DEFINE_string("snapshot", "/home/tangli/Projects/deeplab/prototxt_and_model/vgg16/init.ckpt",
-                             "snapshot dir")
+  tf.app.flags.DEFINE_string("log_path", "/tmp/fyow/log", "Log path")
+  tf.app.flags.DEFINE_string("save_path", "/tmp/fyow/model", "Model path")
+  tf.app.flags.DEFINE_string("snapshot", "/home/tangli/Projects/deeplab/prototxt_and_model/vgg16/init.ckpt", "snapshot dir")
   tf.app.flags.DEFINE_boolean("debug", False, "whether use TFDebug")
   tf.app.flags.DEFINE_boolean("display_feature", False, "whether display_feature")
   tf.app.flags.DEFINE_boolean("display_fc8", False, "whether display_fc8")
   tf.app.flags.DEFINE_boolean("shuffle", True, "whether shuffle the input")
+  tf.app.flags.DEFINE_boolean("random_crop", False, "random_crop")
   tf.app.flags.DEFINE_integer("batch_size", 10, "batch size")
+  tf.app.flags.DEFINE_boolean("resize", True, "resize")
   tf.app.flags.DEFINE_integer("crop_size", 321, "crop size")
   tf.app.flags.DEFINE_integer("max_step", 20000, "max step")
   tf.app.flags.DEFINE_integer("test_step", 0, "test step")
