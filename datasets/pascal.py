@@ -152,11 +152,11 @@ def create_pipeline(filename, root_dir="", batch_size=64, crop_size=(64, 64),
 
     if shuffle:
       [images, labels, img_fns] = tf.train.shuffle_batch(
-        [image, label, img_fn, ], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size, min_after_dequeue=1000)
+        [image, label, img_fn, ], batch_size=batch_size, num_threads=4, capacity=100 + 3 * batch_size, min_after_dequeue=1000)
       return images, labels, img_fns
     else:
       [images, labels, img_fns] = tf.train.batch(
-      [image, label, img_fn], batch_size=batch_size, num_threads=4, capacity=1000 + 3 * batch_size)
+      [image, label, img_fn], batch_size=batch_size, num_threads=4, capacity=100 + 3 * batch_size)
       return images, labels, img_fns
 
 

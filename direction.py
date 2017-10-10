@@ -1,5 +1,6 @@
 import numpy as np
 import numpy.ma as ma
+import time
 import Image
 import cv2
 import tensorflow as tf
@@ -225,8 +226,10 @@ def main(_):
         pp = [None] * 3
         ii = [None] * 3
         for d in xrange(3):
-          pred, _image_fns, _images = \
-            sess.run([tf.cast(prediction[d], tf.uint8), image_fns[d], images[d]])
+          start_time = time.time()
+          pred, _image_fns, _images = sess.run([tf.cast(prediction[d], tf.uint8), image_fns[d], images[d]])
+          end_time = time.time()
+          print 'Inference takes ' + str(end_time - start_time) + ' @ ' + str(d)
           pp[d] = pred[0, :, :, :]
           # pp[d] = cv2.resize(pp[d], (FLAGS.crop_size, FLAGS.crop_size), interpolation=cv2.INTER_NEAREST)
           ii[d] = _images[0, :, :, :]
@@ -284,7 +287,7 @@ def main(_):
         cv2.imshow('img', cii)
         cv2.waitKey(10)
 
-        # cv2.imwrite('%s/re%010d.jpg' % (FLAGS.test_result_dir, ti), cii)
+        cv2.imwrite('%s/re%010d.jpg' % (FLAGS.test_result_dir, ti), cii)
 
         # if accuracy_count > 0:
         #   _accuracy = accuracy_total / accuracy_count
