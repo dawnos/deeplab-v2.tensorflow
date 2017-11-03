@@ -219,19 +219,16 @@ def main(_):
 
     # Test
     if (step % FLAGS.test_interval) == 0:
-      accuracy_total = 0.0
-      accuracy_count = 0
       for ti in xrange(0, FLAGS.test_step):
 
         pp = [None] * 3
         ii = [None] * 3
         for d in xrange(3):
           start_time = time.time()
-          pred, _image_fns, _images = sess.run([tf.cast(prediction[d], tf.uint8), image_fns[d], images[d]])
+          pred, _images = sess.run([tf.cast(prediction[d], tf.uint8), images[d]])
           end_time = time.time()
           print 'Inference takes ' + str(end_time - start_time) + ' @ ' + str(d)
           pp[d] = pred[0, :, :, :]
-          # pp[d] = cv2.resize(pp[d], (FLAGS.crop_size, FLAGS.crop_size), interpolation=cv2.INTER_NEAREST)
           ii[d] = _images[0, :, :, :]
           ii[d][:, :, 0] += mean[0]
           ii[d][:, :, 1] += mean[1]
@@ -243,57 +240,17 @@ def main(_):
             mx = ma.masked_array(ii[d][:, :, 2-mm], mask=(pp[d] != mm))
             mx += delta
 
-          # ii[d] = np.clip(ii[d], 0, 255)
           ii[d] = ii[d].astype(np.uint8)
           ii[d] = cv2.cvtColor(ii[d], cv2.COLOR_RGB2BGR)
 
-
-          # accuracy_total += _accuracy
-          # accuracy_count += 1
-
-
-          if FLAGS.test_result_dir != "":
-            assert(pred.shape[0] == _image_fns.shape[0])
-            for i in xrange(pred.shape[0]):
-              fn = _image_fns[i]
-              img = Image.fromarray(np.array(Image.open(fn)))
-              ss = img.size
-              ww = ss[0]
-              hh = ss[1]
-
-              width_diff = FLAGS.crop_size - ww
-              offset_pad_width = max(width_diff // 2, 0)
-
-              height_diff = FLAGS.crop_size - hh
-              offset_pad_height = max(height_diff // 2, 0)
-
-              # pp = Image.fromarray(pred[i, :, :, 0])
-              # pp = pp.resize((FLAGS.crop_size, FLAGS.crop_size), resample=Image.NEAREST)
-              # pp = pp.crop(box=(offset_pad_width, offset_pad_height, offset_pad_width+ww, offset_pad_height+hh))
-
-              # ppp = Image.fromarray(_images[i, :, :, :])
-              # ppp = ppp.crop(box=(offset_pad_width, offset_pad_height, offset_pad_width + ww, offset_pad_height + hh))
-
-              fn = fn.split("/")
-              fn = fn[-1]
-              fn = fn.replace('jpg', 'png')
-              # pp.save(FLAGS.test_result_dir + '/' + fn)
-              # ppp.save(FLAGS.test_result_dir + '/' + fn + '.jpg')
-
-        # cpp = np.concatenate((pp[0], pp[1], pp[2]), axis=1)
         cii = np.concatenate((ii[0], ii[1], ii[2]), axis=1)
-        # cv2.imshow('win', cpp)
 
         cv2.imshow('img', cii)
         cv2.waitKey(10)
 
-        cv2.imwrite('%s/re%010d.jpg' % (FLAGS.test_result_dir, ti), cii)
+        if FLAGS.test_result_dir != "":
+          cv2.imwrite('%s/re%010d.jpg' % (FLAGS.test_result_dir, ti), cii)
 
-        # if accuracy_count > 0:
-        #   _accuracy = accuracy_total / accuracy_count
-        # else:
-        #   _accuracy = 0.0
-        # print 'Accuracy:' + str(_accuracy)
 
     if step >= FLAGS.max_step:
       break
